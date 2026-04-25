@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      target: production
+    volumes:
+      - gcm_data:/app/data
+    environment:
+      - GCM_DATA_PATH=/app/data/state_graph.json
+    stdin_open: true # docker run -i
+    tty: true        # docker run -t
+
+volumes:
+  gcm_data:

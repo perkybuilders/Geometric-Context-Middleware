@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      target: local
+    volumes:
+      - .:/app
+    environment:
+      - GCM_DATA_PATH=/app/geometric_registry.json
+    stdin_open: true # docker run -i
+    tty: true        # docker run -t
