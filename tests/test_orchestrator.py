@@ -4,7 +4,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from gcm.schema import GeometricNode
 from gcm.registry import GeometricRegistry
-from gcm.orchestrator import TimelineOrchestrator, WeightEngine, DiscontinuityError
+from gcm.orchestrator import TimelineOrchestrator, FourierTimeEngine, DiscontinuityError
 
 class TestOrchestrator(unittest.TestCase):
     def setUp(self):
@@ -16,20 +16,40 @@ class TestOrchestrator(unittest.TestCase):
         if os.path.exists(self.test_file):
             os.remove(self.test_file)
 
-    def test_weight_engine_bend(self):
-        now = datetime.now(timezone.utc)
+    def test_fourier_time_engine_bend(self):
+        t_now = datetime.now(timezone.utc)
+        current_z = 50.0
 
-        node_heavy = GeometricNode(content="Heavy", weight=9.0, timestamp=now)
-        node_light_new = GeometricNode(content="Light New", weight=2.0, timestamp=now)
-        node_light_old = GeometricNode(content="Light Old", weight=2.0, timestamp=now - timedelta(days=1))
+        # Close in Z, recent timestamp -> high dynamic weight
+        node_high_res = GeometricNode(content="High Resonance", weight=5.0, timestamp=t_now, z=50.0)
+        # Far in Z -> low dynamic weight (negative cosine value if pi distance)
+        # Note: distance in Z is 50.0, which is 50 radians (~7.96 * 2pi + ~0.96pi). It's close to -1 resonance.
+        node_low_res = GeometricNode(content="Low Resonance", weight=5.0, timestamp=t_now, z=0.0)
 
-        nodes = [node_light_old, node_heavy, node_light_new]
+        nodes = [node_low_res, node_high_res]
 
-        sorted_nodes = WeightEngine.bend(nodes)
+        sorted_nodes = FourierTimeEngine.bend(nodes, current_z, t_now)
 
-        self.assertEqual(sorted_nodes[0].content, "Heavy")
-        self.assertEqual(sorted_nodes[1].content, "Light New")
-        self.assertEqual(sorted_nodes[2].content, "Light Old")
+        self.assertEqual(sorted_nodes[0].content, "High Resonance")
+        self.assertEqual(sorted_nodes[1].content, "Low Resonance")
+
+    def test_orchestrator_intercept_locked_node(self):
+        # Target coords will be (50, 50, 50)
+        target = (50.0, 50.0, 50.0)
+
+        t_old = datetime.now(timezone.utc) - timedelta(days=2)
+        # Locked node
+        node_locked = GeometricNode(content="Locked Node", weight=2.0, timestamp=t_old, x=50.0, y=50.0, z=50.0)
+
+        self.registry.add_node(node_locked)
+
+        # Intercept should return the nearest but NOT modify weight of locked node
+        intercepted = self.orchestrator.intercept(target)
+        self.assertEqual(len(intercepted), 1)
+
+        # Verify node weight did NOT increase
+        retrieved_node = self.registry.get_node(node_locked.uid)
+        self.assertEqual(retrieved_node.weight, 2.0)
 
     def test_orchestrator_intercept_spatial(self):
         # Target coords will be (50, 50, 50)

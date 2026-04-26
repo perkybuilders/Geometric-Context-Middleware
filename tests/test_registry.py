@@ -2,6 +2,7 @@ import unittest
 import os
 import json
 from uuid import uuid4
+from datetime import datetime, timezone, timedelta
 from gcm.schema import GeometricNode, Link, RelationshipType
 from gcm.registry import GeometricRegistry
 
@@ -65,6 +66,46 @@ class TestRegistry(unittest.TestCase):
         self.assertEqual(len(updated_node1.links), 1)
         self.assertEqual(updated_node1.links[0].target_uid, node2.uid)
         self.assertEqual(updated_node1.links[0].relationship_type, RelationshipType.DEPENDENCY)
+
+    def test_locked_node_modification_prevented(self):
+        old_time = datetime.now(timezone.utc) - timedelta(days=2)
+        node = GeometricNode(content="Historical Bubble", timestamp=old_time)
+
+        # Add initially
+        # Bypass add_node logic for initial creation of old node, or use _write_data
+        data = {str(node.uid): node.model_dump(mode="json")}
+        self.registry._write_data(data)
+
+        self.assertTrue(node.is_locked)
+
+        # Attempt to modify
+        node.content = "Modified Content"
+        with self.assertRaises(ValueError):
+            self.registry.add_node(node)
+
+    def test_auto_surveyor_routing(self):
+        node_existing = GeometricNode(content="Existing Enterprise System", y=50.0, z=50.0)
+        self.registry.add_node(node_existing)
+
+        node_new = GeometricNode(content="New AnyRide Module", y=55.0, z=55.0) # distance is sqrt(25 + 25) = ~7.07 < 10.0
+        self.registry.add_node(node_new)
+
+        retrieved_new = self.registry.get_node(node_new.uid)
+        self.assertEqual(len(retrieved_new.links), 1)
+        self.assertEqual(retrieved_new.links[0].target_uid, node_existing.uid)
+        self.assertEqual(retrieved_new.links[0].relationship_type, RelationshipType.EXPANSION)
+
+    def test_locked_node_link_prevented(self):
+        old_time = datetime.now(timezone.utc) - timedelta(days=2)
+        node1 = GeometricNode(content="Old Source Node", timestamp=old_time)
+        node2 = GeometricNode(content="Target Node")
+
+        # Bypass add_node check for initial add
+        data = {str(node1.uid): node1.model_dump(mode="json"), str(node2.uid): node2.model_dump(mode="json")}
+        self.registry._write_data(data)
+
+        with self.assertRaises(ValueError):
+            self.registry.link_nodes(node1.uid, node2.uid, RelationshipType.DEPENDENCY)
 
 if __name__ == '__main__':
     unittest.main()
