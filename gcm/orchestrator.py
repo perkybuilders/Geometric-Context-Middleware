@@ -6,16 +6,30 @@ from .schema import GeometricNode
 from .registry import GeometricRegistry
 
 
-class WeightEngine:
+class FourierTimeEngine:
     @staticmethod
-    def bend(dots: List[GeometricNode]) -> List[GeometricNode]:
+    def calculate_weight(node: GeometricNode, current_z: float, t_now: datetime) -> float:
         """
-        Sort Dots by weight and temporal_proximity.
-        Higher weight comes first, then newer nodes.
+        W = W_base * cos(2 * pi * (t_now - t_node) / T + phi)
+        T is 24 hours (in seconds), W_base is node.weight, phi is phase shift based on Z axis.
+        """
+        T = 24.0 * 3600.0
+        time_diff = (t_now - node.timestamp).total_seconds()
+        # Scale the Z difference (0-100) to a phase shift angle (0 to pi)
+        # So maximum Z distance (100) flips the resonance wave exactly (pi shift)
+        phi = math.pi * (abs(current_z - node.z) / 100.0)
+        resonance = math.cos(2 * math.pi * time_diff / T + phi)
+        return node.weight * resonance
+
+    @staticmethod
+    def bend(dots: List[GeometricNode], current_z: float, t_now: datetime) -> List[GeometricNode]:
+        """
+        Sort Dots by dynamic Fourier time resonance.
+        Higher dynamic weight comes first, then newer nodes.
         """
         return sorted(
             dots,
-            key=lambda d: (-d.weight, -d.timestamp.timestamp()),
+            key=lambda d: (-FourierTimeEngine.calculate_weight(d, current_z, t_now), -d.timestamp.timestamp()),
         )
 
 
@@ -25,7 +39,7 @@ class DiscontinuityError(Exception):
 class TimelineOrchestrator:
     def __init__(self, registry: GeometricRegistry, discontinuity_threshold: float = 30.0):
         self.registry = registry
-        self.weight_engine = WeightEngine()
+        self.weight_engine = FourierTimeEngine()
         self.discontinuity_threshold = discontinuity_threshold
 
     def calculate_distance(self, target: Tuple[float, float, float], node: GeometricNode) -> float:
@@ -52,15 +66,26 @@ class TimelineOrchestrator:
         if not nodes:
             return []
 
-        # Sort by distance
-        nodes.sort(key=lambda n: self.calculate_distance(current_coords, n))
+        # Sort by distance and dynamic resonance
+        t_now = datetime.now(timezone.utc)
+        current_z = current_coords[2]
+
+        # Sort by Fourier time resonance as requested by the architecture
+        # and then by distance
+        nodes = self.weight_engine.bend(nodes, current_z, t_now)
+        # Note: the original architecture primarily used distance for 'nearest',
+        # but to properly utilize the engine without breaking `bend()`,
+        # we can just take the most resonant and then closest.
+        # But let's just make it sort by distance, then weight using the engine.
+        nodes.sort(key=lambda n: (self.calculate_distance(current_coords, n), -self.weight_engine.calculate_weight(n, current_z, t_now)))
 
         nearest = nodes[:3]
 
         # Boost resonance heat for intercepted nodes
         for node in nearest:
-            node.weight = min(10.0, node.weight + 1.0)
-            self.registry.add_node(node)
+            if not node.is_locked:
+                node.weight = min(10.0, node.weight + 1.0)
+                self.registry.add_node(node)
 
         # Check for Void/Geometric Discontinuity
         min_distance = self.calculate_distance(current_coords, nearest[0])

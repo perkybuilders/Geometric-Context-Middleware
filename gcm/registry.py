@@ -1,10 +1,11 @@
 import json
 import os
 import fcntl
+import math
 from typing import Dict, List
 from uuid import UUID
 
-from .schema import GeometricNode
+from .schema import GeometricNode, Link, RelationshipType
 
 
 class GeometricRegistry:
@@ -17,21 +18,9 @@ class GeometricRegistry:
 
     def decay_weights(self):
         """
-        Decays the weight of every dot by 5% (min 1.0).
-        Called on initialization and whenever 'list' is run.
+        No-op. Linear decay is replaced by the dynamic Fourier Time Engine.
         """
-        data = self._read_data()
-        changed = False
-        for uid_str, node_data in data.items():
-            if 'weight' in node_data:
-                current_weight = float(node_data['weight'])
-                new_weight = max(1.0, current_weight * 0.95)
-                if current_weight != new_weight:
-                    node_data['weight'] = new_weight
-                    changed = True
-
-        if changed:
-            self._write_data(data)
+        pass
 
     def _ensure_file(self):
         if not os.path.exists(self.filepath):
@@ -57,9 +46,33 @@ class GeometricRegistry:
 
     def add_node(self, node: GeometricNode):
         data = self._read_data()
+        uid_str = str(node.uid)
+
+        if uid_str in data:
+            # Gade Murde Protocol: protect historical bubbles
+            existing_node = GeometricNode(**data[uid_str])
+            if existing_node.is_locked:
+                raise ValueError(f"Node {node.uid} is locked and cannot be modified.")
+        else:
+            # Auto-Surveyor Routing for new nodes
+            is_isolated = node.x == -80 or "theory" in node.content.lower() or "learning" in node.content.lower()
+            is_peak_isolated = node.z == 100 or "music" in node.content.lower()
+
+            if not is_isolated and not is_peak_isolated:
+                content_lower = node.content.lower()
+                if "enterprise" in content_lower or "anyride" in content_lower or "grubxpress" in content_lower:
+                    # Calculate distance to other Enterprise nodes in Y and Z
+                    for other_uid, other_data in data.items():
+                        other_node = GeometricNode(**other_data)
+                        other_content_lower = other_node.content.lower()
+                        if "enterprise" in other_content_lower or "anyride" in other_content_lower or "grubxpress" in other_content_lower:
+                            distance = math.sqrt((node.y - other_node.y)**2 + (node.z - other_node.z)**2)
+                            if distance < 10.0:
+                                node.links.append(Link(target_uid=other_node.uid, relationship_type=RelationshipType.EXPANSION))
+
         # Store as dict to easily serialize with datetime string
         node_dict = node.model_dump(mode="json")
-        data[str(node.uid)] = node_dict
+        data[uid_str] = node_dict
         self._write_data(data)
 
     def link_nodes(self, source_uid: UUID, target_uid: UUID, rel_type):
@@ -75,7 +88,9 @@ class GeometricRegistry:
 
         # Re-instantiate the source node to easily validate/append the link
         source_node = GeometricNode(**source_data)
-        from .schema import Link
+        if source_node.is_locked:
+            raise ValueError(f"Source node {source_uid} is locked and cannot be modified.")
+
         source_node.links.append(Link(target_uid=target_uid, relationship_type=rel_type))
 
         # Save back to dict

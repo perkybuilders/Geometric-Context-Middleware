@@ -24,6 +24,16 @@ class GeometricNode(BaseModel):
     links: List[Link] = Field(default_factory=list)
     weight: float = Field(default=1.0, ge=1.0, le=10.0)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    x: float = Field(default=50.0, ge=0.0, le=100.0)  # Temporal (0 = Start, 100 = Final Goal)
+    x: float = Field(default=50.0, ge=-100.0, le=100.0)  # Temporal (0 = Start, 100 = Final Goal)
     y: float = Field(default=50.0, ge=0.0, le=100.0)  # Resolution (0 = Vision, 100 = Code)
     z: float = Field(default=50.0, ge=0.0, le=100.0)  # Aesthetic (0 = Robotic, 100 = Persona)
+
+    @property
+    def is_locked(self) -> bool:
+        """
+        Nodes older than 24 hours are locked (Read-Only) according to the
+        'Gade Murde' Read-Append protocol.
+        """
+        now = datetime.now(timezone.utc)
+        age = now - self.timestamp
+        return age.total_seconds() > 24 * 3600
